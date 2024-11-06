@@ -1,0 +1,104 @@
+#include <opencv2/opencv.hpp>
+#include <vector>
+#include <iostream>
+
+using namespace cv;
+using namespace std;
+
+// Initialize video capture for "video.mp4"
+VideoCapture cap("video.mp4");
+
+// Create a background subtractor object
+Ptr<BackgroundSubtractor> algo = createBackgroundSubtractorMOG2();
+
+// Function to find the center point of a bounding rectangle
+pair<int, int> center_handle(int x, int y, int w, int h) {
+    int cx = x + w / 2;
+    int cy = y + h / 2;
+    return make_pair(cx, cy);
+}
+
+int main() {
+    vector<pair<int, int>> detect; // Store detected vehicle centers
+    int offset = 6; // Offset for detecting crossing line
+    int counter = 0; // Vehicle counter
+    int count_line_position = 500; // Position of the counting line
+    int min_width_react = 80; // Minimum width for a detected object
+    int min_height_react = 80; // Minimum height for a detected object
+
+    while (true) {
+        Mat frame1;
+        bool ret = cap.read(frame1);
+        if (!ret) break; // Exit if no more frames are available
+
+        // Convert to grayscale and apply Gaussian blur
+        Mat grey;
+        cvtColor(frame1, grey, COLOR_BGR2GRAY);
+        Mat blur;
+        GaussianBlur(grey, blur, Size(3, 3), 5);
+
+        // Apply background subtraction
+        Mat img_sub;
+        algo->apply(blur, img_sub);
+
+        // Dilate the image and apply morphological operations
+        Mat dilat;
+        dilate(img_sub, dilat, getStructuringElement(MORPH_RECT, Size(5, 5)));
+        Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
+        Mat dilatada;
+        morphologyEx(dilat, dilatada, MORPH_CLOSE, kernel);
+        morphologyEx(dilatada, dilatada, MORPH_CLOSE, kernel);
+
+        // Find contours of detected objects
+        vector<vector<Point>> counterShape;
+        findContours(dilatada, counterShape, RETR_TREE, CHAIN_APPROX_SIMPLE);
+
+        // Draw the counting line
+        line(frame1, Point(25, count_line_position), Point(1200, count_line_position), Scalar(255, 127, 0), 3);
+
+        for (size_t i = 0; i < counterShape.size(); i++) {
+            Rect rect = boundingRect(counterShape[i]);
+            int x = rect.x;
+            int y = rect.y;
+            int w = rect.width;
+            int h = rect.height;
+
+            bool validate_counter = (w >= min_width_react) && (h >= min_height_react);
+            if (!validate_counter) continue;
+
+            // Draw bounding box and label
+            rectangle(frame1, rect, Scalar(0, 255, 0), 2);
+            putText(frame1, "Vehicle " + to_string(counter), Point(x, y - 20), FONT_HERSHEY_TRIPLEX, 1, Scalar(255, 244, 0), 2);
+
+            // Calculate center and check if vehicle crosses line
+            pair<int, int> center = center_handle(x, y, w, h);
+            detect.push_back(center);
+            circle(frame1, Point(center.first, center.second), 4, Scalar(0, 255, 0), -1);
+
+            for (auto it = detect.begin(); it != detect.end();) {
+                if (it->second < (count_line_position + offset) && it->second > (count_line_position - offset)) {
+                    counter++;
+                    line(frame1, Point(25, count_line_position), Point(1200, count_line_position), Scalar(0, 127, 255), 3);
+                    it = detect.erase(it); // Remove detected point after counting
+                    cout << "Vehicle Counter: " << counter << endl;
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        // Display the vehicle count on screen
+        putText(frame1, "VEHICLE COUNTER: " + to_string(counter), Point(450, 70), FONT_HERSHEY_SIMPLEX, 2, Scalar(0, 0, 255), 5);
+
+        // Show the original video with detections
+        imshow("Video Original", frame1);
+
+        // Exit if 'q' is pressed
+        if (waitKey(30) == 'q') break;
+    }
+
+    // Release resources
+    destroyAllWindows();
+    cap.release();
+    return 0;
+}
